@@ -1,0 +1,103 @@
+
+# Deforming a Nanowire.
+# Suman Kandel, Dr. Mark A. Tschopp, 2011.
+#Edited by Srinath V.
+
+# ------------------------ INITIALIZATION ----------------------------
+units        metal
+boundary     p p p
+
+atom_style   atomic
+
+
+# ----------------------- ATOM DEFINITION ----------------------------
+lattice hcp 3.20
+region whole block 0  100 0 100 0 100 units box
+create_box 1 whole
+region LLF cylinder z  50 50 20  INF INF  units box
+lattice hcp 3.20 orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
+create_atoms 1 region LLF
+#delete_atoms overlap 0.5 all all
+
+# ------------------------ FORCE FIELDS ------------------------------
+pair_style   eam/fs
+pair_coeff   * * Al-Mg.eam.fs Mg
+
+# ------------------------- SETTINGS ---------------------------------
+#### Computes Required
+compute csym all centro/atom 12
+compute 2 all stress/atom NULL
+compute mytemp all temp
+compute 11 all reduce sum c_2[1]
+compute 12 all reduce sum c_2[2]
+compute 13 all reduce sum c_2[3]
+compute 14 all reduce sum c_2[4]
+compute 15 all reduce sum c_2[5]
+compute 16 all reduce sum c_2[6]
+
+neighbor     0.3 bin
+neigh_modify delay 10
+thermo 100
+velocity all create 100.0 16723
+thermo_style custom step temp etotal press pxx pyy pzz lx ly lz
+shell mkdir dump
+shell cd dump
+
+#---------------Energy Equilibriation--------------------------
+reset_timestep 0
+fix 1 all nve
+fix 2 all temp/rescale 10 100.0 100.0 1.0 0.5
+dump 1 all custom 10000 dump.equilibrate.* id type x y z
+
+run 10000
+unfix 1
+unfix 2
+
+#-----------------Pressure Equilibriation-----------------------
+fix 1 all npt temp 100.0 100.0 10.0 aniso 0.0 0.0 10 drag 0.3
+run 10000
+unfix 1
+undump 1
+shell cd ..
+shell mkdir deform
+shell cd deform
+
+#--------------------Storing Initial length---------------------
+variable tmp equal "lz"
+variable L0 equal ${tmp}
+print "Initial Length, L0: ${L0}"
+variable strain equal "v_srate/1e12"
+
+#------------Deform------------------------------
+reset_timestep 0
+fix 1 all deform 1 z erate 0.0001 units box
+fix 2 all nvt temp 100.0 100.0 10.0
+
+variable strain equal "(lz - v_L0)/v_L0"
+variable p1 equal "v_strain"
+variable p2 equal "-pxx/10000"
+variable p3 equal "-pyy/10000"
+variable p4 equal "-pzz/10000"
+variable p5 equal "lx"
+variable p6 equal "ly"
+variable p7 equal "lz"
+variable p8 equal "temp"
+variable p9 equal "pe"
+variable p10 equal "ke"
+variable p11 equal "-pxy/10000"
+variable p13 equal "-pyz/10000"
+variable p12 equal "-pxz/10000"
+variable fm equal "(v_p2+v_p3+v_p4)/3" ##### Hydrostatic stress
+
+variable fv equal "sqrt((v_p2-v_p3)^2+(v_p3-v_p4)^2+(v_p4-v_p2)^2+6*(v_p11^2+v_p12^2+v_p13^2)/2)" ######Von Mises Stress
+
+variable t equal "v_fm/v_fv"
+variable fd equal (((v_p2-v_fm)*(v_p3-v_fm)*(v_p4-v_fm))-v_p11^2*(v_p4-v_fm)-v_p12^2*(v_p3-v_fm)-v_p13^2*(v_p2-v_fm)+2*v_p11*v_p12*v_p13)####Deviatoric Von Mises stress
+
+dump 2 all custom 10000 dump.defo.* id type x y z c_csym c_2[1] c_2[2] c_2[3] c_2[4] c_2[5] c_2[6]
+dump            3 all xyz 10000 Mg_*.xyz
+dump            4 all dcd 10000 Mg.dcd
+
+fix def_print all print 100 "${p1} ${p2} ${p3} ${p4} ${p5} ${p6} ${p7} ${p8} ${p9} ${p10} ${p11} ${p12} ${p13} ${fm} ${fv} ${t} ${fd}" file mg001.defo.txt screen no
+run 100000
+
